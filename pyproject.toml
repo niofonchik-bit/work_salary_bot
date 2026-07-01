@@ -1,7 +1,7 @@
 [project]
 name = "work-salary-bot"
-version = "1.0.0"
-description = "Personal Telegram bot for work time and salary tracking"
+version = "2.0.0"
+description = "Personal Telegram bot for work time, salary and goal tracking"
 requires-python = ">=3.12"
 
 [tool.ruff]
@@ -9,7 +9,7 @@ line-length = 110
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

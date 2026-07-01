@@ -6,31 +6,23 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from app.config import Config
-
 
 class AccessMiddleware(BaseMiddleware):
+    def __init__(self, allowed_user_ids: frozenset[int]):
+        self.allowed_user_ids = allowed_user_ids
+
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        config: Config = data["config"]
+        # проверка доступа
         user = data.get("event_from_user")
-        if user is None or not config.allowed_user_ids or user.id in config.allowed_user_ids:
+        if user is None or not self.allowed_user_ids or user.id in self.allowed_user_ids:
             return await handler(event, data)
-
-        if isinstance(event, Message) and event.text and event.text.startswith("/myid"):
-            return await handler(event, data)
-
-        text = (
-            "Доступ к боту закрыт.\n"
-            f"Ваш Telegram ID: <code>{user.id}</code>\n"
-            "Добавьте его в ALLOWED_USER_IDS в файле .env."
-        )
         if isinstance(event, Message):
-            await event.answer(text)
+            await event.answer("Доступ к боту закрыт.")
         elif isinstance(event, CallbackQuery):
-            await event.answer("Доступ запрещён", show_alert=True)
+            await event.answer("Доступ закрыт.", show_alert=True)
         return None

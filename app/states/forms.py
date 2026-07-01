@@ -1,22 +1,17 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
-class GoalStates(StatesGroup):
-    custom_value = State()
-
-
-class SettingsStates(StatesGroup):
+class SettingForm(StatesGroup):
     value = State()
 
 
-class AddSessionStates(StatesGroup):
-    date = State()
-    start = State()
-    end = State()
-    break_minutes = State()
+class ManualSessionForm(StatesGroup):
+    value = State()
 
 
-class EditSessionStates(StatesGroup):
-    start = State()
-    end = State()
-    break_minutes = State()
+class SessionEditForm(StatesGroup):
+    value = State()
+
+
+class CalendarDateForm(StatesGroup):
+    value = State()

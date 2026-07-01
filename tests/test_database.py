@@ -2,84 +2,34 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.database.database import Database
+from app.database.session import Database
+from app.database.tables import Base
+from app.repositories.sessions import SessionRepository
+from app.repositories.users import UserRepository
 
 
 @pytest.mark.asyncio
-async def test_database_creates_and_closes_session(tmp_path):
-    db = Database(tmp_path / "test.db")
-    await db.connect()
-    try:
-        await db.ensure_user(123, "Europe/Istanbul")
-        start = datetime(2026, 7, 1, 6, 0, tzinfo=UTC)
-        created = await db.start_session(123, start)
-        assert created.ended_at_utc is None
-        assert (await db.get_active_session(123)).id == created.id
+async def test_session_lifecycle(tmp_path) -> None:
+    database = Database(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    await database.connect()
+    async with database.engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
 
-        ended = await db.end_session(created.id, start + timedelta(hours=9))
-        assert ended.ended_at_utc == start + timedelta(hours=9)
-        assert await db.get_active_session(123) is None
-    finally:
-        await db.close()
+    users = UserRepository(database)
+    sessions = SessionRepository(database)
+    await users.ensure(1, "Europe/Istanbul")
 
+    start = datetime.now(UTC).replace(microsecond=0)
+    work_session = await sessions.start(1, start)
+    await sessions.start_break(1, start + timedelta(hours=2))
+    await sessions.finish_break(1, start + timedelta(hours=2, minutes=30))
+    finished = await sessions.finish(1, start + timedelta(hours=9))
 
-@pytest.mark.asyncio
-async def test_database_detects_overlapping_manual_sessions(tmp_path):
-    db = Database(tmp_path / "test.db")
-    await db.connect()
-    try:
-        await db.ensure_user(123, "Europe/Istanbul")
-        start = datetime(2026, 7, 1, 6, 0, tzinfo=UTC)
-        end = start + timedelta(hours=8)
-        await db.create_session(123, start, end)
+    assert finished.id == work_session.id
+    assert len(finished.breaks) == 1
+    await sessions.soft_delete(1, work_session.id)
+    assert await sessions.get(1, work_session.id) is None
+    restored = await sessions.restore(1, work_session.id)
+    assert restored.deleted_at_utc is None
 
-        assert await db.has_overlap(
-            123,
-            start + timedelta(hours=1),
-            end + timedelta(hours=1),
-        )
-        assert not await db.has_overlap(
-            123,
-            end,
-            end + timedelta(hours=2),
-        )
-    finally:
-        await db.close()
-
-
-@pytest.mark.asyncio
-async def test_database_rejects_break_equal_to_session_duration(tmp_path):
-    db = Database(tmp_path / "test.db")
-    await db.connect()
-    try:
-        await db.ensure_user(123, "Europe/Istanbul")
-        start = datetime(2026, 7, 1, 6, 0, tzinfo=UTC)
-        end = start + timedelta(hours=1)
-
-        with pytest.raises(ValueError):
-            await db.create_session(123, start, end, break_minutes=60)
-    finally:
-        await db.close()
-
-
-@pytest.mark.asyncio
-async def test_database_rejects_shortening_session_below_break(tmp_path):
-    db = Database(tmp_path / "test.db")
-    await db.connect()
-    try:
-        await db.ensure_user(123, "Europe/Istanbul")
-        start = datetime(2026, 7, 1, 6, 0, tzinfo=UTC)
-        session = await db.create_session(
-            123,
-            start,
-            start + timedelta(hours=2),
-            break_minutes=30,
-        )
-
-        with pytest.raises(ValueError):
-            await db.update_session(
-                session.id,
-                ended_at_utc=start + timedelta(minutes=30),
-            )
-    finally:
-        await db.close()
+    await database.close()

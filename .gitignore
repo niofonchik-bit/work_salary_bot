@@ -2,9 +2,13 @@
 __pycache__/
 *.py[cod]
 .env
-.vscode/
 .pytest_cache/
 .ruff_cache/
-data/
-
-*.zip
+.coverage
+htmlcov/
+data/*.db
+data/*.sqlite*
+*.log
+.idea/
+.vscode/
+.DS_Store

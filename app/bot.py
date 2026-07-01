@@ -6,88 +6,107 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
-from sqlalchemy.engine import make_url
+from alembic.config import Config as AlembicConfig
 
+from alembic import command
 from app.config import Config
-from app.database.database import Database
+from app.context import AppContext
+from app.database.session import Database
+from app.database.storage import DatabaseStorage
 from app.handlers import build_root_router
+from app.health import HealthServer
+from app.logging_config import configure_logging
 from app.middlewares.access import AccessMiddleware
+from app.repositories.fsm import FsmRepository
+from app.services.reminder_engine import ReminderEngine
 
 logger = logging.getLogger(__name__)
 
 
 async def run_bot(config: Config) -> None:
+    # запуск приложения
+    await _run_migrations(config.database_url)
     database = Database(config.database_url)
     await _connect_database(database)
+    context = AppContext.build(config, database)
 
-    database_backend = make_url(config.database_url).get_backend_name()
-    logger.info("Database connected: %s", database_backend)
+    bot = Bot(
+        token=config.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    storage = DatabaseStorage(FsmRepository(database))
+    dispatcher = Dispatcher(storage=storage)
+    dispatcher.include_router(build_root_router())
 
-    bot: Bot | None = None
+    access = AccessMiddleware(config.allowed_user_ids)
+    dispatcher.message.outer_middleware(access)
+    dispatcher.callback_query.outer_middleware(access)
+
+    health = HealthServer(database, config.healthcheck_host, config.healthcheck_port)
+    reminder_engine = ReminderEngine(bot, context, config.reminder_poll_seconds)
+    reminder_task: asyncio.Task | None = None
+
     try:
-        bot = Bot(
-            token=config.bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-        dispatcher = Dispatcher(storage=MemoryStorage())
-        dispatcher.include_router(build_root_router())
-
-        access_middleware = AccessMiddleware()
-        dispatcher.message.outer_middleware(access_middleware)
-        dispatcher.callback_query.outer_middleware(access_middleware)
-
         await bot.set_my_commands(
             [
-                BotCommand(command="start", description="Открыть главное меню"),
+                BotCommand(command="start", description="Главное меню"),
                 BotCommand(command="help", description="Справка"),
-                BotCommand(command="cancel", description="Отменить текущий ввод"),
-                BotCommand(command="myid", description="Показать Telegram ID"),
+                BotCommand(command="cancel", description="Отмена ввода"),
+                BotCommand(command="myid", description="Telegram ID"),
+                BotCommand(command="status", description="Состояние приложения"),
             ]
         )
-
-        # long polling cannot work while a webhook is active
         await bot.delete_webhook(drop_pending_updates=False)
-
-        logger.info("Bot polling started")
+        if config.healthcheck_enabled:
+            await health.start()
+        reminder_task = asyncio.create_task(reminder_engine.run(), name="reminder-engine")
+        logger.info("Bot polling started", extra={"event": "bot_started"})
         await dispatcher.start_polling(
             bot,
-            config=config,
-            db=database,
+            context=context,
             allowed_updates=dispatcher.resolve_used_update_types(),
         )
     finally:
-        logger.info("Bot polling stopped")
-        if bot is not None:
-            await bot.session.close()
+        logger.info("Bot polling stopped", extra={"event": "bot_stopped"})
+        if reminder_task is not None:
+            reminder_task.cancel()
+            await asyncio.gather(reminder_task, return_exceptions=True)
+        await health.close()
+        await storage.close()
+        await bot.session.close()
         await database.close()
 
 
+async def _run_migrations(database_url: str) -> None:
+    # запуск миграции
+    def run() -> None:
+        alembic_config = AlembicConfig("alembic.ini")
+        alembic_config.set_main_option("sqlalchemy.url", database_url)
+        command.upgrade(alembic_config, "head")
+
+    await asyncio.to_thread(run)
+
+
 async def _connect_database(database: Database) -> None:
-    max_attempts = 10
-    for attempt in range(1, max_attempts + 1):
+    # подключение базы
+    for attempt in range(1, 11):
         try:
             await database.connect()
             return
         except Exception:
             await database.close()
-            if attempt == max_attempts:
+            if attempt == 10:
                 raise
             delay = min(2 ** (attempt - 1), 15)
             logger.exception(
-                "Database connection failed on attempt %s/%s. Retrying in %s seconds",
-                attempt,
-                max_attempts,
-                delay,
+                "Database connection failed",
+                extra={"event": "database_connection_failed"},
             )
             await asyncio.sleep(delay)
 
 
 def main() -> None:
     config = Config.from_env()
-    logging.basicConfig(
-        level=getattr(logging, config.log_level, logging.INFO),
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+    configure_logging(config.log_level)
     asyncio.run(run_bot(config))
