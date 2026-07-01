@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message
 from app.context import AppContext
 from app.database.enums import DayType
 from app.handlers.helpers import ensure_user
-from app.keyboards.inline import calendar_day_keyboard
+from app.keyboards.inline import calendar_day_keyboard, cancel_keyboard
 from app.keyboards.main import MainButtons
 from app.states.forms import CalendarDateForm
 from app.utils.formatters import DAY_TYPE_NAMES, format_minutes
@@ -18,21 +18,48 @@ router = Router(name="calendar")
 
 
 @router.message(F.text == MainButtons.CALENDAR)
-async def calendar_handler(message: Message, context: AppContext) -> None:
+async def calendar_handler(message: Message, state: FSMContext, context: AppContext) -> None:
     user_id = await ensure_user(message, context)
+    await state.clear()
     _, day, _, now_local = await context.analysis.today(user_id)
-    await message.answer(
+    await context.ui.show(
+        message,
         _calendar_text(day.work_date, day.day_type, day.expected_minutes, day.is_paid),
         reply_markup=calendar_day_keyboard(now_local.date().isoformat()),
     )
 
 
 @router.callback_query(F.data == "calendar:date")
-async def calendar_date_handler(callback: CallbackQuery, state: FSMContext) -> None:
-    # выбор даты
+async def calendar_date_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    context: AppContext,
+) -> None:
     await state.set_state(CalendarDateForm.value)
-    await callback.message.answer("Введите дату в формате <code>ДД.ММ.ГГГГ</code>:")
+    await context.ui.show(
+        callback,
+        "<b>📅 Выбор даты</b>\n\nВведите дату в формате <code>ДД.ММ.ГГГГ</code>:",
+        reply_markup=cancel_keyboard("calendar:cancel"),
+    )
     await callback.answer()
+
+
+@router.callback_query(F.data == "calendar:cancel")
+async def calendar_cancel_handler(
+    callback: CallbackQuery,
+    state: FSMContext,
+    context: AppContext,
+) -> None:
+    user_id = await ensure_user(callback, context)
+    await state.clear()
+    _, day, _, now_local = await context.analysis.today(user_id)
+    await context.ui.show(
+        callback,
+        "Действие отменено.\n\n"
+        + _calendar_text(day.work_date, day.day_type, day.expected_minutes, day.is_paid),
+        reply_markup=calendar_day_keyboard(now_local.date().isoformat()),
+    )
+    await callback.answer("Действие отменено.")
 
 
 @router.message(CalendarDateForm.value)
@@ -44,9 +71,13 @@ async def calendar_date_value_handler(
     user_id = await ensure_user(message, context)
     user = await context.users.get(user_id)
     try:
-        work_date = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        work_date = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Пример: <code>15.07.2026</code>")
+        await context.ui.show(
+            message,
+            "<b>📅 Выбор даты</b>\n\n⚠️ Некорректная дата. Пример: <code>15.07.2026</code>",
+            reply_markup=cancel_keyboard("calendar:cancel"),
+        )
         return
     await context.calendar.ensure_month(
         user_id,
@@ -56,10 +87,15 @@ async def calendar_date_value_handler(
     )
     day = await context.calendar.get_day(user_id, work_date)
     if day is None:
-        await message.answer("День календаря не найден.")
+        await context.ui.show(
+            message,
+            "⚠️ День календаря не найден.",
+            reply_markup=cancel_keyboard("calendar:cancel"),
+        )
         return
     await state.clear()
-    await message.answer(
+    await context.ui.show(
+        message,
         _calendar_text(day.work_date, day.day_type, day.expected_minutes, day.is_paid),
         reply_markup=calendar_day_keyboard(work_date.isoformat()),
     )
@@ -102,12 +138,12 @@ async def calendar_set_handler(callback: CallbackQuery, context: AppContext) -> 
         expected,
         is_paid,
     )
+    await context.ui.show(
+        callback,
+        "✅ Календарь обновлён.\n\n" + _calendar_text(work_date, day_type, expected, is_paid),
+        reply_markup=calendar_day_keyboard(work_date.isoformat()),
+    )
     await callback.answer("Календарь обновлён.")
-    if callback.message:
-        await callback.message.edit_text(
-            _calendar_text(work_date, day_type, expected, is_paid),
-            reply_markup=calendar_day_keyboard(work_date.isoformat()),
-        )
 
 
 def _calendar_text(work_date: date, day_type: str, expected: int, is_paid: bool) -> str:

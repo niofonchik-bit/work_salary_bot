@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from app.context import AppContext
@@ -11,8 +12,13 @@ router = Router(name="export")
 
 
 @router.message(F.text == MainButtons.EXPORT)
-async def export_handler(message: Message) -> None:
-    await message.answer("Выберите формат экспорта:", reply_markup=export_keyboard())
+async def export_handler(message: Message, state: FSMContext, context: AppContext) -> None:
+    await state.clear()
+    await context.ui.show(
+        message,
+        "<b>📤 Экспорт</b>\n\nВыберите формат. Сам файл останется в чате как полезный результат.",
+        reply_markup=export_keyboard(),
+    )
 
 
 @router.callback_query(F.data.startswith("export:"))
@@ -26,5 +32,11 @@ async def export_callback(callback: CallbackQuery, context: AppContext) -> None:
     else:
         content = build_json_export(bundle.user, bundle.calendar_days, bundle.sessions)
         filename = f"backup-{bundle.analysis.year}-{bundle.analysis.month:02d}.json"
-    await callback.message.answer_document(BufferedInputFile(content, filename=filename))
-    await callback.answer()
+    if callback.message:
+        await callback.message.answer_document(BufferedInputFile(content, filename=filename))
+    await context.ui.show(
+        callback,
+        f"✅ Файл <code>{filename}</code> отправлен.\n\nВыберите другой формат при необходимости.",
+        reply_markup=export_keyboard(),
+    )
+    await callback.answer("Файл отправлен.")

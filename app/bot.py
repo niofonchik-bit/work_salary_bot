@@ -7,9 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
-from alembic.config import Config as AlembicConfig
 
-from alembic import command
 from app.config import Config
 from app.context import AppContext
 from app.database.session import Database
@@ -26,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 async def run_bot(config: Config) -> None:
     # запуск приложения
-    await _run_migrations(config.database_url)
     database = Database(config.database_url)
     await _connect_database(database)
     context = AppContext.build(config, database)
@@ -43,7 +40,14 @@ async def run_bot(config: Config) -> None:
     dispatcher.message.outer_middleware(access)
     dispatcher.callback_query.outer_middleware(access)
 
-    health = HealthServer(database, config.healthcheck_host, config.healthcheck_port)
+    health = HealthServer(
+        database,
+        bot,
+        context,
+        config,
+        config.healthcheck_host,
+        config.healthcheck_port,
+    )
     reminder_engine = ReminderEngine(bot, context, config.reminder_poll_seconds)
     reminder_task: asyncio.Task | None = None
 
@@ -58,7 +62,7 @@ async def run_bot(config: Config) -> None:
             ]
         )
         await bot.delete_webhook(drop_pending_updates=False)
-        if config.healthcheck_enabled:
+        if config.healthcheck_enabled or config.geofence_enabled:
             await health.start()
         reminder_task = asyncio.create_task(reminder_engine.run(), name="reminder-engine")
         logger.info("Bot polling started", extra={"event": "bot_started"})
@@ -76,16 +80,6 @@ async def run_bot(config: Config) -> None:
         await storage.close()
         await bot.session.close()
         await database.close()
-
-
-async def _run_migrations(database_url: str) -> None:
-    # запуск миграции
-    def run() -> None:
-        alembic_config = AlembicConfig("alembic.ini")
-        alembic_config.set_main_option("sqlalchemy.url", database_url)
-        command.upgrade(alembic_config, "head")
-
-    await asyncio.to_thread(run)
 
 
 async def _connect_database(database: Database) -> None:

@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.context import AppContext
@@ -10,7 +11,8 @@ router = Router(name="analytics")
 
 
 @router.message(F.text == MainButtons.ANALYTICS)
-async def analytics_handler(message: Message, context: AppContext) -> None:
+async def analytics_handler(message: Message, state: FSMContext, context: AppContext) -> None:
     user_id = await ensure_user(message, context)
+    await state.clear()
     bundle = await context.analysis.month(user_id)
-    await message.answer(build_month_report(bundle.analysis))
+    await context.ui.show(message, build_month_report(bundle.analysis))

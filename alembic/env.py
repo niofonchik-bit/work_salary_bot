@@ -4,12 +4,15 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.config import normalize_database_url
 from app.database.tables import Base
+
+load_dotenv()
 
 config = context.config
 if config.config_file_name is not None:

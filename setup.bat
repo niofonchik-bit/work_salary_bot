@@ -13,6 +13,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 if not exist .env copy .env.example .env
+alembic upgrade head
 
 echo.
 echo Setup completed. Fill .env and run run.bat.

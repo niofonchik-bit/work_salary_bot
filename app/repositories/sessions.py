@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -56,6 +56,24 @@ class SessionRepository:
                 .order_by(WorkSessionTable.started_at_utc)
             )
             return [to_session(row) for row in result.unique().all()]
+
+    async def exists_started_between(
+        self,
+        user_id: int,
+        start_utc: datetime,
+        end_utc: datetime,
+    ) -> bool:
+        # проверка смены
+        async with self.database.sessions()() as session:
+            statement = select(
+                exists().where(
+                    WorkSessionTable.user_id == user_id,
+                    WorkSessionTable.deleted_at_utc.is_(None),
+                    WorkSessionTable.started_at_utc >= start_utc,
+                    WorkSessionTable.started_at_utc < end_utc,
+                )
+            )
+            return bool(await session.scalar(statement))
 
     async def start(self, user_id: int, started_at_utc: datetime) -> WorkSession:
         # начало смены

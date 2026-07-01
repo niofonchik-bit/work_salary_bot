@@ -10,6 +10,7 @@ from app.repositories.payments import PaymentRepository
 from app.repositories.reminders import ReminderRepository
 from app.repositories.sessions import SessionRepository
 from app.repositories.users import UserRepository
+from app.services.chat_ui import ChatUiService
 from app.use_cases.analysis import AnalysisUseCase
 from app.use_cases.work_time import WorkTimeUseCase
 
@@ -26,6 +27,7 @@ class AppContext:
     audit: AuditRepository
     analysis: AnalysisUseCase
     work_time: WorkTimeUseCase
+    ui: ChatUiService
 
     @classmethod
     def build(cls, config: Config, database: Database) -> AppContext:
@@ -38,6 +40,7 @@ class AppContext:
         audit_repository = AuditRepository(database)
         analysis = AnalysisUseCase(users, calendar_repository, session_repository)
         work_time = WorkTimeUseCase(session_repository, audit_repository)
+        ui = ChatUiService()
         return cls(
             config=config,
             database=database,
@@ -49,4 +52,5 @@ class AppContext:
             audit=audit_repository,
             analysis=analysis,
             work_time=work_time,
+            ui=ui,
         )

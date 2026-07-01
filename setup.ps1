@@ -9,4 +9,6 @@ if (-not (Test-Path .env)) {
     Copy-Item .env.example .env
 }
 
+alembic upgrade head
+
 Write-Host 'Setup completed. Fill .env and run run.bat.' -ForegroundColor Green

@@ -8,6 +8,7 @@ from aiogram import Bot
 
 from app.context import AppContext
 from app.database.enums import ReminderType
+from app.keyboards.inline import dismiss_keyboard
 from app.services.reports import build_week_report
 from app.services.time_tracking import session_work_minutes, total_break_minutes
 
@@ -113,7 +114,7 @@ class ReminderEngine:
     ) -> None:
         if await self.context.reminders.was_sent(user_id, reminder_type, delivery_key):
             return
-        await self.bot.send_message(user_id, text)
+        await self.bot.send_message(user_id, text, reply_markup=dismiss_keyboard())
         await self.context.reminders.mark_sent(user_id, reminder_type, delivery_key)
         logger.info(
             "Reminder sent",

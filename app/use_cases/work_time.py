@@ -12,14 +12,25 @@ class WorkTimeUseCase:
         self.sessions = sessions
         self.audit = audit
 
-    async def start(self, user_id: int, started_at_utc: datetime) -> WorkSession:
+    async def start(
+        self,
+        user_id: int,
+        started_at_utc: datetime,
+        source: str = "telegram",
+    ) -> WorkSession:
+        # начало смены
+        if source not in {"telegram", "geofence"}:
+            raise ValueError("Неизвестный источник смены.")
         session = await self.sessions.start(user_id, started_at_utc)
         await self.audit.add(
             user_id,
             "work_session",
             session.id,
             "start",
-            after_data={"started_at_utc": session.started_at_utc.isoformat()},
+            after_data={
+                "started_at_utc": session.started_at_utc.isoformat(),
+                "source": source,
+            },
         )
         return session
 
