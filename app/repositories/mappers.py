@@ -2,9 +2,11 @@ from datetime import UTC, datetime
 
 from app.database.models import (
     CalendarDay,
+    GeofenceEvent,
     MonthlySettings,
     PayProfile,
     PaySchedule,
+    PendingShift,
     ReminderSettings,
     UserSettings,
     WorkBreak,
@@ -12,9 +14,11 @@ from app.database.models import (
 )
 from app.database.tables import (
     CalendarDayTable,
+    GeofenceEventTable,
     MonthlySettingsTable,
     PayProfileTable,
     PayScheduleTable,
+    PendingShiftTable,
     ReminderSettingsTable,
     UserTable,
     WorkBreakTable,
@@ -96,6 +100,36 @@ def to_session(row: WorkSessionTable) -> WorkSession:
         created_at_utc=_as_utc(row.created_at_utc),
         updated_at_utc=_as_utc(row.updated_at_utc),
         breaks=breaks,
+    )
+
+
+def to_geofence_event(row: GeofenceEventTable) -> GeofenceEvent:
+    return GeofenceEvent(
+        id=row.id,
+        user_id=row.user_id,
+        pending_shift_id=row.pending_shift_id,
+        zone=row.zone,
+        event_type=row.event_type,
+        occurred_at_utc=_as_utc(row.occurred_at_utc),
+        client=row.client,
+        status=row.status,
+    )
+
+
+def to_pending_shift(row: PendingShiftTable) -> PendingShift:
+    return PendingShift(
+        id=row.id,
+        user_id=row.user_id,
+        local_date=row.local_date,
+        suggested_start_utc=_as_utc(row.suggested_start_utc) if row.suggested_start_utc else None,
+        suggested_end_utc=_as_utc(row.suggested_end_utc) if row.suggested_end_utc else None,
+        status=row.status,
+        telegram_chat_id=row.telegram_chat_id,
+        telegram_message_id=row.telegram_message_id,
+        work_session_id=row.work_session_id,
+        created_at_utc=_as_utc(row.created_at_utc),
+        updated_at_utc=_as_utc(row.updated_at_utc),
+        processed_at_utc=_as_utc(row.processed_at_utc) if row.processed_at_utc else None,
     )
 
 

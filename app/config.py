@@ -28,6 +28,9 @@ class Config:
     geofence_zone: str
     geofence_arrival_start: time
     geofence_arrival_end: time
+    geofence_departure_start: time
+    geofence_departure_end: time
+    geofence_event_dedup_minutes: int
 
     @classmethod
     def from_env(cls) -> Config:
@@ -67,6 +70,20 @@ class Config:
             arrival_end_raw = arrival_end_raw.strip() or "13:00"
         geofence_arrival_start = _parse_time(arrival_start_raw, "GEOFENCE_ARRIVAL_START")
         geofence_arrival_end = _parse_time(arrival_end_raw, "GEOFENCE_ARRIVAL_END")
+        departure_start_raw = os.getenv("GEOFENCE_DEPARTURE_START", "12:00").strip() or "12:00"
+        departure_end_raw = os.getenv("GEOFENCE_DEPARTURE_END", "23:59").strip() or "23:59"
+        geofence_departure_start = _parse_time(
+            departure_start_raw,
+            "GEOFENCE_DEPARTURE_START",
+        )
+        geofence_departure_end = _parse_time(
+            departure_end_raw,
+            "GEOFENCE_DEPARTURE_END",
+        )
+        try:
+            geofence_event_dedup_minutes = int(os.getenv("GEOFENCE_EVENT_DEDUP_MINUTES", "15"))
+        except ValueError as error:
+            raise RuntimeError("GEOFENCE_EVENT_DEDUP_MINUTES должен быть целым числом.") from error
         _validate_geofence(
             enabled=geofence_enabled,
             secret=geofence_secret,
@@ -75,6 +92,9 @@ class Config:
             zone=geofence_zone,
             arrival_start=geofence_arrival_start,
             arrival_end=geofence_arrival_end,
+            departure_start=geofence_departure_start,
+            departure_end=geofence_departure_end,
+            dedup_minutes=geofence_event_dedup_minutes,
         )
 
         return cls(
@@ -95,6 +115,9 @@ class Config:
             geofence_zone=geofence_zone,
             geofence_arrival_start=geofence_arrival_start,
             geofence_arrival_end=geofence_arrival_end,
+            geofence_departure_start=geofence_departure_start,
+            geofence_departure_end=geofence_departure_end,
+            geofence_event_dedup_minutes=geofence_event_dedup_minutes,
         )
 
 
@@ -155,6 +178,9 @@ def _validate_geofence(
     zone: str,
     arrival_start: time,
     arrival_end: time,
+    departure_start: time,
+    departure_end: time,
+    dedup_minutes: int,
 ) -> None:
     # конфигурация геозоны
     if not enabled:
@@ -170,4 +196,8 @@ def _validate_geofence(
     if not zone or len(zone) > 64:
         raise RuntimeError("GEOFENCE_ZONE должен содержать от 1 до 64 символов.")
     if arrival_start >= arrival_end:
-        raise RuntimeError("Окно автоматического прихода должно завершаться позже начала.")
+        raise RuntimeError("Окно события прихода должно завершаться позже начала.")
+    if departure_start >= departure_end:
+        raise RuntimeError("Окно события ухода должно завершаться позже начала.")
+    if dedup_minutes < 0 or dedup_minutes > 1440:
+        raise RuntimeError("GEOFENCE_EVENT_DEDUP_MINUTES должен быть в диапазоне от 0 до 1440.")

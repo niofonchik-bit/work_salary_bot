@@ -41,3 +41,23 @@ class ReminderType(StrEnum):
     OPEN_SHIFT = "open_shift"
     OPEN_BREAK = "open_break"
     WEEKLY_REPORT = "weekly_report"
+
+
+class GeofenceEventType(StrEnum):
+    ARRIVAL = "arrival"
+    DEPARTURE = "departure"
+
+
+class GeofenceEventStatus(StrEnum):
+    RECORDED = "recorded"
+    DUPLICATE = "duplicate"
+    MERGED = "merged"
+
+
+class PendingShiftStatus(StrEnum):
+    WAITING_ARRIVAL = "waiting_arrival"
+    WAITING_DEPARTURE = "waiting_departure"
+    READY = "ready"
+    ATTENTION = "attention"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"

@@ -397,9 +397,11 @@ async def _settings_section_text(context: AppContext, user_id: int, section: str
         config = context.config
         lines.extend(
             [
-                f"Автоматический приход: {'включён' if config.geofence_enabled else 'выключен'}",
+                f"События геозоны: {'включены' if config.geofence_enabled else 'выключены'}",
                 f"Зона: {config.geofence_zone}",
                 f"Окно прихода: {config.geofence_arrival_start:%H:%M}–{config.geofence_arrival_end:%H:%M}",
+                f"Окно ухода: {config.geofence_departure_start:%H:%M}–{config.geofence_departure_end:%H:%M}",
+                f"Дедупликация: {config.geofence_event_dedup_minutes} мин",
                 "",
                 "Параметры геозоны меняются в переменных окружения Railway.",
             ]

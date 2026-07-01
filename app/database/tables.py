@@ -207,6 +207,78 @@ class WorkBreakTable(Base):
     )
 
 
+class PendingShiftTable(Base):
+    # таблица ожидающей смены
+    __tablename__ = "pending_shifts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.telegram_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    suggested_start_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suggested_end_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    work_session_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("work_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    processed_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "local_date", name="uq_pending_shifts_user_date"),
+        CheckConstraint(
+            "status IN ('waiting_arrival', 'waiting_departure', 'ready', 'attention', "
+            "'confirmed', 'rejected')",
+            name="ck_pending_shifts_status",
+        ),
+        Index("idx_pending_shifts_user_status_date", "user_id", "status", "local_date"),
+    )
+
+
+class GeofenceEventTable(Base):
+    # таблица события геозоны
+    __tablename__ = "geofence_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.telegram_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    pending_shift_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("pending_shifts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    zone: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    occurred_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    client: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('arrival', 'departure')",
+            name="ck_geofence_events_type",
+        ),
+        CheckConstraint(
+            "status IN ('recorded', 'duplicate', 'merged')",
+            name="ck_geofence_events_status",
+        ),
+        Index("idx_geofence_events_user_time", "user_id", "occurred_at_utc"),
+        Index("idx_geofence_events_pending", "pending_shift_id"),
+    )
+
+
 class ReminderSettingsTable(Base):
     # таблица напоминания
     __tablename__ = "reminder_settings"

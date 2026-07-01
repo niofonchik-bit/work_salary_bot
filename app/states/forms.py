@@ -15,3 +15,7 @@ class SessionEditForm(StatesGroup):
 
 class CalendarDateForm(StatesGroup):
     value = State()
+
+
+class PendingShiftTimeForm(StatesGroup):
+    value = State()

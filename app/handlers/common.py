@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from app.context import AppContext
 from app.handlers.helpers import ensure_user
 from app.keyboards.main import main_keyboard
+from app.services.geofence_notifications import sync_pending_notification
 
 router = Router(name="common")
 
@@ -33,6 +34,7 @@ async def help_handler(message: Message, context: AppContext) -> None:
         "• «Ушёл» — завершение смены\n"
         "• «Перерыв» — начало или завершение перерыва\n"
         "• «Анализ» — зарплата, баланс и план цели\n"
+        "• «Подтверждения» — смены, предложенные геозоной\n"
         "• «Календарь» — отпуск, больничный и выходной\n"
         "• /cancel — отмена текущего ввода\n\n"
         "Сообщения меню обновляются на одном экране, поэтому история чата не захламляется.",
@@ -41,6 +43,23 @@ async def help_handler(message: Message, context: AppContext) -> None:
 
 @router.message(Command("cancel"))
 async def cancel_handler(message: Message, state: FSMContext, context: AppContext) -> None:
+    data = await state.get_data()
+    pending_shift_id = data.get("pending_shift_id")
+    if pending_shift_id is not None and message.from_user is not None:
+        try:
+            pending = await context.geofence_repository.get(
+                message.from_user.id,
+                int(pending_shift_id),
+            )
+            user = await context.users.get(message.from_user.id)
+            await sync_pending_notification(
+                message.bot,
+                context.geofence_repository,
+                pending,
+                user.timezone,
+            )
+        except (LookupError, ValueError):
+            pass
     await state.clear()
     await context.ui.show(message, "Действие отменено.\n\n" + _home_text())
 

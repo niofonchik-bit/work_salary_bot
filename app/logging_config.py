@@ -19,6 +19,8 @@ class JsonFormatter(logging.Formatter):
             "event",
             "user_id",
             "session_id",
+            "event_id",
+            "pending_shift_id",
             "reminder_type",
             "reason",
             "zone",

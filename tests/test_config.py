@@ -42,6 +42,9 @@ def test_enabled_geofence_configuration(monkeypatch: pytest.MonkeyPatch) -> None
     assert config.geofence_zone == "office"
     assert config.geofence_arrival_start == time(5, 0)
     assert config.geofence_arrival_end == time(13, 0)
+    assert config.geofence_departure_start == time(12, 0)
+    assert config.geofence_departure_end == time(23, 59)
+    assert config.geofence_event_dedup_minutes == 15
 
 
 @pytest.mark.parametrize(
@@ -93,3 +96,6 @@ def _base_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEOFENCE_ZONE", raising=False)
     monkeypatch.delenv("GEOFENCE_ARRIVAL_START", raising=False)
     monkeypatch.delenv("GEOFENCE_ARRIVAL_END", raising=False)
+    monkeypatch.delenv("GEOFENCE_DEPARTURE_START", raising=False)
+    monkeypatch.delenv("GEOFENCE_DEPARTURE_END", raising=False)
+    monkeypatch.delenv("GEOFENCE_EVENT_DEDUP_MINUTES", raising=False)

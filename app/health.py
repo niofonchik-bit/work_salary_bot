@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import Config
 from app.context import AppContext
 from app.database.session import Database
-from app.keyboards.inline import dismiss_keyboard
+from app.services.geofence_notifications import sync_pending_notification
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,9 @@ class HealthServer:
         app.router.add_get("/health", self._health)
         app.router.add_get("/", self._root)
         if self.config.geofence_enabled:
+            app.router.add_post("/api/geofence/event", self._geofence_event)
             app.router.add_post("/api/geofence/arrival", self._geofence_arrival)
+            app.router.add_post("/api/geofence/departure", self._geofence_departure)
         return app
 
     async def start(self) -> None:
@@ -70,16 +72,33 @@ class HealthServer:
         return web.json_response({"service": "work-salary-bot", "status": "running"})
 
     async def _geofence_arrival(self, request: web.Request) -> web.Response:
+        return await self._handle_geofence_event(request, "arrival")
+
+    async def _geofence_departure(self, request: web.Request) -> web.Response:
+        return await self._handle_geofence_event(request, "departure")
+
+    async def _geofence_event(self, request: web.Request) -> web.Response:
+        return await self._handle_geofence_event(request, None)
+
+    async def _handle_geofence_event(
+        self,
+        request: web.Request,
+        forced_event_type: str | None,
+    ) -> web.Response:
         # обработчик геозоны
         if not self._authorized(request):
-            logger.warning("Geofence authorization failed", extra={"event": "geofence_arrival_unauthorized"})
+            logger.warning(
+                "Geofence authorization failed",
+                extra={"event": "geofence_event_unauthorized"},
+            )
             return _error_response("unauthorized", 401)
 
-        payload = await self._read_payload(request)
+        payload = await self._read_payload(request, forced_event_type)
         if payload is None:
             return _error_response("invalid_request", 400)
 
         zone = payload["zone"]
+        event_type = payload["event"]
         if zone != self.config.geofence_zone:
             return _error_response("invalid_request", 400)
 
@@ -90,78 +109,68 @@ class HealthServer:
         try:
             user = await self.context.users.get(user_id)
             now_utc = self.now_provider().astimezone(UTC)
-            zone_info = ZoneInfo(user.timezone)
-            now_local = now_utc.astimezone(zone_info)
+            now_local = now_utc.astimezone(ZoneInfo(user.timezone))
+            if not self._inside_event_window(event_type, now_local.time()):
+                return self._ignored(user_id, zone, event_type, "outside_event_window")
 
-            await self._send_debug_notification(
+            registration = await self.context.geofence.register_event(
                 user_id=user_id,
-                now_local=now_local,
+                local_date=now_local.date(),
                 zone=zone,
+                event_type=event_type,
+                occurred_at_utc=now_utc,
                 client=payload["client"],
+                dedup_minutes=self.config.geofence_event_dedup_minutes,
             )
-
-            if not self._inside_arrival_window(now_local.time()):
-                return self._ignored(user_id, zone, "outside_arrival_window")
-
-            active = await self.context.sessions.get_active(user_id)
-            if active is not None:
-                return self._ignored(user_id, zone, "active_session_exists")
-
-            day_start_local = datetime.combine(now_local.date(), time.min, tzinfo=zone_info)
-            day_end_local = day_start_local + timedelta(days=1)
-            already_recorded = await self.context.sessions.exists_started_between(
-                user_id,
-                day_start_local.astimezone(UTC),
-                day_end_local.astimezone(UTC),
+            notification_sent = await sync_pending_notification(
+                self.bot,
+                self.context.geofence_repository,
+                registration.pending_shift,
+                user.timezone,
             )
-            if already_recorded:
-                return self._ignored(user_id, zone, "arrival_already_recorded")
-
-            try:
-                work_session = await self.context.work_time.start(
-                    user_id,
-                    now_utc,
-                    source="geofence",
-                )
-            except ValueError:
-                active = await self.context.sessions.get_active(user_id)
-                reason = "active_session_exists" if active is not None else "arrival_already_recorded"
-                return self._ignored(user_id, zone, reason)
-
-            notification_sent = await self._send_notification(user_id, work_session.id, now_local)
+            response_status = 200 if registration.duplicate else 202
             logger.info(
-                "Geofence arrival created",
+                "Geofence event accepted",
                 extra={
-                    "event": "geofence_arrival_created",
+                    "event": "geofence_event_accepted",
                     "user_id": user_id,
-                    "session_id": work_session.id,
+                    "reason": registration.event.status,
                     "zone": zone,
                     "notification_sent": notification_sent,
                 },
             )
             return web.json_response(
                 {
-                    "status": "created",
-                    "sessionId": work_session.id,
-                    "startedAtUtc": now_utc.isoformat(),
-                    "startedAtLocal": now_local.isoformat(),
+                    "status": "duplicate" if registration.duplicate else "accepted",
+                    "eventId": registration.event.id,
+                    "eventType": event_type,
+                    "eventStatus": registration.event.status,
+                    "pendingShiftId": registration.pending_shift.id,
+                    "occurredAtUtc": now_utc.isoformat(),
+                    "occurredAtLocal": now_local.isoformat(),
                     "timezone": user.timezone,
-                    "notificationSent": notification_sent,
+                    "messageUpdated": notification_sent,
                 },
-                status=201,
+                status=response_status,
             )
         except LookupError:
             return _error_response("user_not_initialized", 409)
         except SQLAlchemyError:
             logger.exception(
                 "Geofence database error",
-                extra={"event": "geofence_arrival_failed", "user_id": user_id},
+                extra={"event": "geofence_event_failed", "user_id": user_id},
             )
             return _error_response("database_unavailable", 503)
+        except TelegramAPIError:
+            logger.exception(
+                "Geofence notification error",
+                extra={"event": "geofence_notification_failed", "user_id": user_id},
+            )
+            return _error_response("notification_unavailable", 503)
         except Exception:
             logger.exception(
-                "Geofence arrival error",
-                extra={"event": "geofence_arrival_failed", "user_id": user_id},
+                "Geofence event error",
+                extra={"event": "geofence_event_failed", "user_id": user_id},
             )
             return _error_response("internal_error", 500)
 
@@ -173,7 +182,11 @@ class HealthServer:
             return False
         return hmac.compare_digest(token, self.config.geofence_secret)
 
-    async def _read_payload(self, request: web.Request) -> dict[str, str] | None:
+    async def _read_payload(
+        self,
+        request: web.Request,
+        forced_event_type: str | None,
+    ) -> dict[str, str] | None:
         # тело запроса
         try:
             payload = await request.json()
@@ -184,76 +197,43 @@ class HealthServer:
 
         zone = payload.get("zone")
         client = payload.get("client", "")
+        event_type = forced_event_type or payload.get("event")
         if not isinstance(zone, str) or not zone or len(zone) > 64:
             return None
         if not isinstance(client, str) or len(client) > 64:
             return None
-        return {"zone": zone, "client": client}
+        if event_type not in {"arrival", "departure"}:
+            return None
+        return {"zone": zone, "client": client, "event": event_type}
 
-    def _inside_arrival_window(self, local_time: time) -> bool:
-        return self.config.geofence_arrival_start <= local_time < self.config.geofence_arrival_end
+    def _inside_event_window(self, event_type: str, local_time: time) -> bool:
+        if event_type == "arrival":
+            return self.config.geofence_arrival_start <= local_time < self.config.geofence_arrival_end
+        return self.config.geofence_departure_start <= local_time < self.config.geofence_departure_end
 
-    def _ignored(self, user_id: int, zone: str, reason: str) -> web.Response:
+    def _ignored(
+        self,
+        user_id: int,
+        zone: str,
+        event_type: str,
+        reason: str,
+    ) -> web.Response:
         logger.info(
-            "Geofence arrival ignored",
+            "Geofence event ignored",
             extra={
-                "event": "geofence_arrival_ignored",
+                "event": "geofence_event_ignored",
                 "user_id": user_id,
                 "reason": reason,
                 "zone": zone,
             },
         )
-        return web.json_response({"status": "ignored", "reason": reason})
-
-    async def _send_debug_notification(
-        self,
-        user_id: int,
-        now_local: datetime,
-        zone: str,
-        client: str,
-    ) -> None:
-        # уведомление проверки
-        try:
-            await self.bot.send_message(
-                user_id,
-                (
-                    "🧪 <b>Тест геозоны</b>\n\n"
-                    f"Запрос получен: <b>{now_local:%d.%m.%Y %H:%M:%S}</b>\n"
-                    f"Зона: <code>{zone}</code>\n"
-                    f"Клиент: <code>{client or 'не указан'}</code>\n\n"
-                    "Это сообщение подтверждает срабатывание MacroDroid."
-                ),
-                reply_markup=dismiss_keyboard(),
-            )
-        except TelegramAPIError:
-            logger.exception(
-                "Geofence debug notification failed",
-                extra={
-                    "event": "geofence_debug_notification_failed",
-                    "user_id": user_id,
-                    "zone": zone,
-                },
-            )
-
-    async def _send_notification(self, user_id: int, session_id: int, now_local: datetime) -> bool:
-        # уведомление геозоны
-        try:
-            await self.bot.send_message(
-                user_id,
-                f"📍 Приход отмечен автоматически: <b>{now_local:%H:%M}</b>\nИсточник: геозона офиса",
-                reply_markup=dismiss_keyboard(),
-            )
-            return True
-        except TelegramAPIError:
-            logger.exception(
-                "Geofence notification failed",
-                extra={
-                    "event": "geofence_notification_failed",
-                    "user_id": user_id,
-                    "session_id": session_id,
-                },
-            )
-            return False
+        return web.json_response(
+            {
+                "status": "ignored",
+                "eventType": event_type,
+                "reason": reason,
+            }
+        )
 
 
 def _error_response(code: str, status: int) -> web.Response:

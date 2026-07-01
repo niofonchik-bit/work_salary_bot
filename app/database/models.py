@@ -96,3 +96,38 @@ class PaySchedule:
     amount_cents: int
     include_overtime: bool
     enabled: bool
+
+
+@dataclass(slots=True)
+class GeofenceEvent:
+    id: int
+    user_id: int
+    pending_shift_id: int
+    zone: str
+    event_type: str
+    occurred_at_utc: datetime
+    client: str | None
+    status: str
+
+
+@dataclass(slots=True)
+class PendingShift:
+    id: int
+    user_id: int
+    local_date: date
+    suggested_start_utc: datetime | None
+    suggested_end_utc: datetime | None
+    status: str
+    telegram_chat_id: int | None
+    telegram_message_id: int | None
+    work_session_id: int | None
+    created_at_utc: datetime
+    updated_at_utc: datetime
+    processed_at_utc: datetime | None
+
+
+@dataclass(slots=True)
+class GeofenceRegistration:
+    event: GeofenceEvent
+    pending_shift: PendingShift
+    duplicate: bool

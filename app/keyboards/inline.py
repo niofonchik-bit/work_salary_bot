@@ -3,7 +3,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.database.models import WorkSession
+from app.database.models import PendingShift, WorkSession
 
 SETTINGS_SECTIONS: dict[str, list[tuple[str, str]]] = {
     "income": [
@@ -163,5 +163,63 @@ def export_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="CSV за месяц", callback_data="export:csv")
     builder.button(text="JSON-копия", callback_data="export:json")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def pending_shift_keyboard(pending: PendingShift) -> InlineKeyboardMarkup:
+    # клавиатура ожидающей смены
+    builder = InlineKeyboardBuilder()
+    if pending.suggested_start_utc is not None and pending.suggested_end_utc is not None:
+        builder.button(text="✅ Подтвердить смену", callback_data=f"geofence:confirm:{pending.id}")
+    if pending.suggested_start_utc is None:
+        builder.button(text="🕘 Указать приход", callback_data=f"geofence:time:{pending.id}:start")
+    else:
+        builder.button(text="✏️ Изменить приход", callback_data=f"geofence:time:{pending.id}:start")
+    if pending.suggested_end_utc is None:
+        builder.button(text="🏁 Указать уход", callback_data=f"geofence:time:{pending.id}:end")
+    else:
+        builder.button(text="✏️ Изменить уход", callback_data=f"geofence:time:{pending.id}:end")
+    builder.button(text="❌ Отклонить", callback_data=f"geofence:reject_prompt:{pending.id}")
+    builder.adjust(1, 2, 1)
+    return builder.as_markup()
+
+
+def pending_shift_reject_keyboard(pending_shift_id: int) -> InlineKeyboardMarkup:
+    # клавиатура отклонения смены
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Да, отклонить", callback_data=f"geofence:reject:{pending_shift_id}")
+    builder.button(text="✖️ Отмена", callback_data=f"geofence:view:{pending_shift_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def pending_shift_time_cancel_keyboard(pending_shift_id: int) -> InlineKeyboardMarkup:
+    # клавиатура отмены времени
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✖️ Отмена", callback_data=f"geofence:view:{pending_shift_id}")
+    return builder.as_markup()
+
+
+def pending_shift_list_keyboard(pending: list[PendingShift]) -> InlineKeyboardMarkup:
+    # клавиатура списка смен
+    builder = InlineKeyboardBuilder()
+    for item in pending:
+        marker = "✅" if item.suggested_start_utc and item.suggested_end_utc else "⚠️"
+        builder.button(
+            text=f"{marker} {item.local_date:%d.%m.%Y}",
+            callback_data=f"geofence:view:{item.id}",
+        )
+    if any(item.suggested_start_utc and item.suggested_end_utc for item in pending):
+        builder.button(text="✅ Подтвердить все полные", callback_data="geofence:bulk_prompt")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def pending_shift_bulk_keyboard() -> InlineKeyboardMarkup:
+    # клавиатура массового подтверждения
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить", callback_data="geofence:bulk_confirm")
+    builder.button(text="✖️ Отмена", callback_data="geofence:list")
     builder.adjust(1)
     return builder.as_markup()

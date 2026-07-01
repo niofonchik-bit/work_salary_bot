@@ -8,6 +8,7 @@ class MainButtons:
     BREAK = "☕ Перерыв"
     ANALYTICS = "📊 Анализ"
     HISTORY = "🗓 История"
+    PENDING = "📥 Подтверждения"
     CALENDAR = "📅 Календарь"
     PAYMENTS = "💳 Выплаты"
     EXPORT = "📤 Экспорт"
@@ -21,8 +22,9 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=MainButtons.TODAY)],
             [KeyboardButton(text=MainButtons.ARRIVE), KeyboardButton(text=MainButtons.LEAVE)],
             [KeyboardButton(text=MainButtons.BREAK), KeyboardButton(text=MainButtons.ANALYTICS)],
-            [KeyboardButton(text=MainButtons.HISTORY), KeyboardButton(text=MainButtons.CALENDAR)],
-            [KeyboardButton(text=MainButtons.PAYMENTS), KeyboardButton(text=MainButtons.EXPORT)],
+            [KeyboardButton(text=MainButtons.HISTORY), KeyboardButton(text=MainButtons.PENDING)],
+            [KeyboardButton(text=MainButtons.CALENDAR), KeyboardButton(text=MainButtons.PAYMENTS)],
+            [KeyboardButton(text=MainButtons.EXPORT)],
             [KeyboardButton(text=MainButtons.SETTINGS)],
         ],
         resize_keyboard=True,

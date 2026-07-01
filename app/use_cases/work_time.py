@@ -45,6 +45,30 @@ class WorkTimeUseCase:
         )
         return session
 
+    async def add_completed(
+        self,
+        user_id: int,
+        started_at_utc: datetime,
+        ended_at_utc: datetime,
+        source: str = "telegram",
+    ) -> WorkSession:
+        # создание смены
+        if source not in {"telegram", "geofence"}:
+            raise ValueError("Неизвестный источник смены.")
+        session = await self.sessions.add_manual(user_id, started_at_utc, ended_at_utc)
+        await self.audit.add(
+            user_id,
+            "work_session",
+            session.id,
+            "create",
+            after_data={
+                "started_at_utc": session.started_at_utc.isoformat(),
+                "ended_at_utc": session.ended_at_utc.isoformat() if session.ended_at_utc else None,
+                "source": source,
+            },
+        )
+        return session
+
     async def start_break(self, user_id: int, started_at_utc: datetime) -> WorkBreak:
         value = await self.sessions.start_break(user_id, started_at_utc)
         await self.audit.add(user_id, "work_break", value.id, "start")
