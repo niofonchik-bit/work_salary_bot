@@ -93,6 +93,13 @@ class HealthServer:
             zone_info = ZoneInfo(user.timezone)
             now_local = now_utc.astimezone(zone_info)
 
+            await self._send_debug_notification(
+                user_id=user_id,
+                now_local=now_local,
+                zone=zone,
+                client=payload["client"],
+            )
+
             if not self._inside_arrival_window(now_local.time()):
                 return self._ignored(user_id, zone, "outside_arrival_window")
 
@@ -197,6 +204,36 @@ class HealthServer:
             },
         )
         return web.json_response({"status": "ignored", "reason": reason})
+
+    async def _send_debug_notification(
+        self,
+        user_id: int,
+        now_local: datetime,
+        zone: str,
+        client: str,
+    ) -> None:
+        # уведомление проверки
+        try:
+            await self.bot.send_message(
+                user_id,
+                (
+                    "🧪 <b>Тест геозоны</b>\n\n"
+                    f"Запрос получен: <b>{now_local:%d.%m.%Y %H:%M:%S}</b>\n"
+                    f"Зона: <code>{zone}</code>\n"
+                    f"Клиент: <code>{client or 'не указан'}</code>\n\n"
+                    "Это сообщение подтверждает срабатывание MacroDroid."
+                ),
+                reply_markup=dismiss_keyboard(),
+            )
+        except TelegramAPIError:
+            logger.exception(
+                "Geofence debug notification failed",
+                extra={
+                    "event": "geofence_debug_notification_failed",
+                    "user_id": user_id,
+                    "zone": zone,
+                },
+            )
 
     async def _send_notification(self, user_id: int, session_id: int, now_local: datetime) -> bool:
         # уведомление геозоны
