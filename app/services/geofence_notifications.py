@@ -80,6 +80,13 @@ def render_pending_shift(pending: PendingShift, timezone: str) -> str:
         f"Приход: <b>{start:%H:%M}</b>" if start else "Приход: <b>не найден</b>",
         f"Уход: <b>{end:%H:%M}</b>" if end else "Уход: <b>не найден</b>",
     ]
+
+    if pending.work_session_id is not None and pending.status not in {
+        PendingShiftStatus.CONFIRMED,
+        PendingShiftStatus.REJECTED,
+    }:
+        lines.append("Источник прихода: <b>ручная отметка</b>")
+
     if start and end:
         if end > start:
             lines.append(f"Продолжительность: <b>{_duration_text(pending)}</b>")

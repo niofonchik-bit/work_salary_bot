@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+from app.database.enums import PendingShiftStatus
 from app.database.models import GeofenceRegistration, PendingShift, WorkSession
 from app.repositories.audit import AuditRepository
 from app.repositories.geofence import GeofenceRepository
@@ -30,6 +31,14 @@ class GeofenceUseCase:
         dedup_minutes: int,
     ) -> GeofenceRegistration:
         # событие геозоны
+        linked_session = None
+
+        if event_type == "departure":
+            linked_session = await self.work_time.sessions.get_active(user_id)
+
+            if linked_session is not None and linked_session.started_at_utc >= occurred_at_utc:
+                linked_session = None
+
         result = await self.repository.register_event(
             user_id,
             local_date,
@@ -38,6 +47,8 @@ class GeofenceUseCase:
             occurred_at_utc,
             client,
             dedup_minutes,
+            linked_work_session_id=linked_session.id if linked_session else None,
+            linked_started_at_utc=(linked_session.started_at_utc if linked_session else None),
         )
         await self.audit.add(
             user_id,
@@ -49,34 +60,90 @@ class GeofenceUseCase:
                 "occurred_at_utc": result.event.occurred_at_utc.isoformat(),
                 "status": result.event.status,
                 "pending_shift_id": result.pending_shift.id,
+                "work_session_id": result.pending_shift.work_session_id,
             },
         )
         return result
 
-    async def confirm(self, user_id: int, pending_shift_id: int) -> tuple[PendingShift, WorkSession]:
+    async def confirm(
+        self,
+        user_id: int,
+        pending_shift_id: int,
+    ) -> tuple[PendingShift, WorkSession]:
         # подтверждение смены
         pending = await self.repository.get(user_id, pending_shift_id)
-        if pending.work_session_id is not None:
+
+        if pending.status == PendingShiftStatus.CONFIRMED:
             raise ValueError("Смена уже подтверждена.")
+
+        if pending.status == PendingShiftStatus.REJECTED:
+            raise ValueError("Смена уже отклонена.")
+
         if pending.suggested_start_utc is None or pending.suggested_end_utc is None:
             raise ValueError("Для подтверждения нужны время прихода и ухода.")
+
         if pending.suggested_end_utc <= pending.suggested_start_utc:
             raise ValueError("Время ухода должно быть позже времени прихода.")
 
-        session = await self.work_time.add_completed(
+        if pending.work_session_id is not None:
+            # связанная смена
+            session = await self.work_time.sessions.get(
+                user_id,
+                pending.work_session_id,
+            )
+
+            if session is None:
+                raise LookupError("Связанная рабочая смена не найдена.")
+
+            if session.ended_at_utc is None:
+                active_session = await self.work_time.sessions.get_active(user_id)
+
+                if active_session is None or active_session.id != session.id:
+                    raise ValueError("Связанная смена больше не является активной.")
+
+                session = await self.work_time.finish(
+                    user_id,
+                    pending.suggested_end_utc,
+                    source="geofence",
+                )
+            else:
+                pending = await self.repository.update_time(
+                    user_id,
+                    pending_shift_id,
+                    "start",
+                    session.started_at_utc,
+                )
+                pending = await self.repository.update_time(
+                    user_id,
+                    pending_shift_id,
+                    "end",
+                    session.ended_at_utc,
+                )
+        else:
+            session = await self.work_time.add_completed(
+                user_id,
+                pending.suggested_start_utc,
+                pending.suggested_end_utc,
+                source="geofence",
+            )
+
+        updated = await self.repository.mark_confirmed(
             user_id,
-            pending.suggested_start_utc,
-            pending.suggested_end_utc,
-            source="geofence",
+            pending_shift_id,
+            session.id,
         )
-        updated = await self.repository.mark_confirmed(user_id, pending_shift_id, session.id)
+
         await self.audit.add(
             user_id,
             "pending_shift",
             pending_shift_id,
             "confirm",
-            after_data={"work_session_id": session.id},
+            after_data={
+                "work_session_id": session.id,
+                "linked_session": pending.work_session_id is not None,
+            },
         )
+
         return updated, session
 
     async def reject(self, user_id: int, pending_shift_id: int) -> PendingShift:

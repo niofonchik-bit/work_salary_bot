@@ -353,3 +353,82 @@ def _config(database_url: str, enabled: bool = True) -> Config:
         geofence_departure_end=time(23, 59),
         geofence_event_dedup_minutes=15,
     )
+
+
+@pytest.mark.asyncio
+async def test_departure_links_manual_active_session(tmp_path) -> None:
+    database = await _database(tmp_path / "manual-arrival.db")
+    config = _config(database.url)
+    context = AppContext.build(config, database)
+
+    await context.users.ensure(123, "Europe/Istanbul")
+
+    started_at = datetime(
+        2026,
+        7,
+        1,
+        6,
+        0,
+        tzinfo=UTC,
+    )
+    ended_at = datetime(
+        2026,
+        7,
+        1,
+        14,
+        20,
+        tzinfo=UTC,
+    )
+
+    manual_session = await context.work_time.start(
+        123,
+        started_at,
+        source="telegram",
+    )
+
+    health = HealthServer(
+        database,
+        _bot(),
+        context,
+        config,
+        "127.0.0.1",
+        0,
+        lambda: ended_at,
+    )
+
+    async with TestClient(TestServer(health.build_app())) as client:
+        response = await client.post(
+            "/api/geofence/departure",
+            headers={"Authorization": (f"Bearer {config.geofence_secret}")},
+            json={
+                "zone": "office",
+                "client": "test",
+            },
+        )
+
+        payload = await response.json()
+
+        assert response.status == 202
+
+    pending = await context.geofence_repository.get(
+        123,
+        payload["pendingShiftId"],
+    )
+
+    assert pending.status == PendingShiftStatus.READY
+    assert pending.work_session_id == manual_session.id
+    assert pending.suggested_start_utc == started_at
+    assert pending.suggested_end_utc == ended_at
+
+    confirmed, finished_session = await context.geofence.confirm(
+        123,
+        pending.id,
+    )
+
+    assert confirmed.status == PendingShiftStatus.CONFIRMED
+    assert finished_session.id == manual_session.id
+    assert finished_session.started_at_utc == started_at
+    assert finished_session.ended_at_utc == ended_at
+    assert await _count(database, WorkSessionTable) == 1
+
+    await database.close()

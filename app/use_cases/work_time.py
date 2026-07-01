@@ -34,15 +34,29 @@ class WorkTimeUseCase:
         )
         return session
 
-    async def finish(self, user_id: int, ended_at_utc: datetime) -> WorkSession:
+    async def finish(
+        self,
+        user_id: int,
+        ended_at_utc: datetime,
+        source: str = "telegram",
+    ) -> WorkSession:
+        # завершение смены
+        if source not in {"telegram", "geofence"}:
+            raise ValueError("Неизвестный источник смены.")
+
         session = await self.sessions.finish(user_id, ended_at_utc)
+
         await self.audit.add(
             user_id,
             "work_session",
             session.id,
             "finish",
-            after_data={"ended_at_utc": ended_at_utc.isoformat()},
+            after_data={
+                "ended_at_utc": ended_at_utc.isoformat(),
+                "source": source,
+            },
         )
+
         return session
 
     async def add_completed(

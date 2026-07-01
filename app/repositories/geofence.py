@@ -32,6 +32,8 @@ class GeofenceRepository:
         occurred_at_utc: datetime,
         client: str | None,
         dedup_minutes: int,
+        linked_work_session_id: int | None = None,
+        linked_started_at_utc: datetime | None = None,
     ) -> GeofenceRegistration:
         # регистрация события
         for attempt in range(2):
@@ -44,6 +46,8 @@ class GeofenceRepository:
                     occurred_at_utc,
                     client,
                     dedup_minutes,
+                    linked_work_session_id,
+                    linked_started_at_utc,
                 )
             except IntegrityError:
                 if attempt:
@@ -59,6 +63,8 @@ class GeofenceRepository:
         occurred_at_utc: datetime,
         client: str | None,
         dedup_minutes: int,
+        linked_work_session_id: int | None,
+        linked_started_at_utc: datetime | None,
     ) -> GeofenceRegistration:
         now = datetime.now(UTC)
         async with self.database.sessions()() as session:
@@ -74,12 +80,12 @@ class GeofenceRepository:
                 row = PendingShiftTable(
                     user_id=user_id,
                     local_date=local_date,
-                    suggested_start_utc=None,
+                    suggested_start_utc=linked_started_at_utc,
                     suggested_end_utc=None,
-                    status=PendingShiftStatus.WAITING_DEPARTURE,
+                    status=_derive_status(linked_started_at_utc, None),
                     telegram_chat_id=None,
                     telegram_message_id=None,
-                    work_session_id=None,
+                    work_session_id=linked_work_session_id,
                     created_at_utc=now,
                     updated_at_utc=now,
                     processed_at_utc=None,
@@ -91,6 +97,12 @@ class GeofenceRepository:
                 PendingShiftStatus.CONFIRMED,
                 PendingShiftStatus.REJECTED,
             }
+
+            if not processed and linked_work_session_id is not None and linked_started_at_utc is not None:
+                # активная смена
+                row.work_session_id = linked_work_session_id
+                row.suggested_start_utc = linked_started_at_utc
+
             event_status = self._merge_event(row, event_type, occurred_at_utc, dedup_minutes, processed)
             if not processed:
                 row.status = _derive_status(row.suggested_start_utc, row.suggested_end_utc)
