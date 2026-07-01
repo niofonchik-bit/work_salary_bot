@@ -432,3 +432,154 @@ async def test_departure_links_manual_active_session(tmp_path) -> None:
     assert await _count(database, WorkSessionTable) == 1
 
     await database.close()
+
+
+@pytest.mark.asyncio
+async def test_new_event_after_rejected_shift_creates_new_pending_shift(
+    tmp_path,
+) -> None:
+    database = await _database(tmp_path / "rejected-retry.db")
+    config = _config(database.url)
+    context = AppContext.build(config, database)
+    await context.users.ensure(123, "Europe/Istanbul")
+
+    bot = _bot()
+    current = {
+        "value": datetime(2026, 7, 1, 6, 0, tzinfo=UTC),
+    }
+
+    health = HealthServer(
+        database,
+        bot,
+        context,
+        config,
+        "127.0.0.1",
+        0,
+        lambda: current["value"],
+    )
+
+    async with TestClient(TestServer(health.build_app())) as client:
+        first_response = await client.post(
+            "/api/geofence/arrival",
+            headers={
+                "Authorization": f"Bearer {config.geofence_secret}",
+            },
+            json={
+                "zone": "office",
+                "client": "test",
+            },
+        )
+
+        first_payload = await first_response.json()
+        first_id = first_payload["pendingShiftId"]
+
+        rejected = await context.geofence.reject(123, first_id)
+
+        assert rejected.status == PendingShiftStatus.REJECTED
+
+        current["value"] = datetime(
+            2026,
+            7,
+            1,
+            6,
+            30,
+            tzinfo=UTC,
+        )
+
+        second_response = await client.post(
+            "/api/geofence/arrival",
+            headers={
+                "Authorization": f"Bearer {config.geofence_secret}",
+            },
+            json={
+                "zone": "office",
+                "client": "test",
+            },
+        )
+
+        second_payload = await second_response.json()
+
+    assert first_response.status == 202
+    assert second_response.status == 202
+    assert second_payload["status"] == "accepted"
+    assert second_payload["pendingShiftId"] != first_id
+
+    first_pending = await context.geofence_repository.get(
+        123,
+        first_id,
+    )
+    second_pending = await context.geofence_repository.get(
+        123,
+        second_payload["pendingShiftId"],
+    )
+
+    assert first_pending.status == PendingShiftStatus.REJECTED
+    assert second_pending.status == PendingShiftStatus.WAITING_DEPARTURE
+
+    assert await _count(database, PendingShiftTable) == 2
+    assert await _count(database, GeofenceEventTable) == 2
+    assert bot.send_message.await_count == 2
+
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_event_does_not_repeat_notification(
+    tmp_path,
+) -> None:
+    database = await _database(tmp_path / "duplicate-notification.db")
+    config = _config(database.url)
+    context = AppContext.build(config, database)
+    await context.users.ensure(123, "Europe/Istanbul")
+
+    bot = _bot()
+    current = {
+        "value": datetime(2026, 7, 1, 6, 0, tzinfo=UTC),
+    }
+
+    health = HealthServer(
+        database,
+        bot,
+        context,
+        config,
+        "127.0.0.1",
+        0,
+        lambda: current["value"],
+    )
+
+    async with TestClient(TestServer(health.build_app())) as client:
+        await client.post(
+            "/api/geofence/arrival",
+            headers={
+                "Authorization": f"Bearer {config.geofence_secret}",
+            },
+            json={"zone": "office"},
+        )
+
+        current["value"] = datetime(
+            2026,
+            7,
+            1,
+            6,
+            5,
+            tzinfo=UTC,
+        )
+
+        duplicate_response = await client.post(
+            "/api/geofence/arrival",
+            headers={
+                "Authorization": f"Bearer {config.geofence_secret}",
+            },
+            json={"zone": "office"},
+        )
+
+        duplicate_payload = await duplicate_response.json()
+
+    assert duplicate_response.status == 200
+    assert duplicate_payload["status"] == "duplicate"
+    assert duplicate_payload["messageUpdated"] is False
+
+    assert bot.send_message.await_count == 1
+    bot.edit_message_text.assert_not_awaited()
+
+    await database.close()

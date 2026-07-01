@@ -73,9 +73,46 @@ class GeofenceRepository:
                 .where(
                     PendingShiftTable.user_id == user_id,
                     PendingShiftTable.local_date == local_date,
+                    PendingShiftTable.status.in_([status.value for status in _PENDING_STATUSES]),
                 )
+                .order_by(PendingShiftTable.id.desc())
                 .with_for_update()
             )
+
+            if row is None:
+                confirmed_row = await session.scalar(
+                    select(PendingShiftTable)
+                    .where(
+                        PendingShiftTable.user_id == user_id,
+                        PendingShiftTable.local_date == local_date,
+                        PendingShiftTable.status == PendingShiftStatus.CONFIRMED,
+                    )
+                    .order_by(PendingShiftTable.id.desc())
+                    .with_for_update()
+                )
+
+                if confirmed_row is not None:
+                    event_row = GeofenceEventTable(
+                        user_id=user_id,
+                        pending_shift_id=confirmed_row.id,
+                        zone=zone,
+                        event_type=event_type,
+                        occurred_at_utc=occurred_at_utc,
+                        client=client or None,
+                        status=GeofenceEventStatus.DUPLICATE,
+                        created_at_utc=now,
+                    )
+
+                    session.add(event_row)
+                    await session.commit()
+                    await session.refresh(event_row)
+
+                    return GeofenceRegistration(
+                        event=to_geofence_event(event_row),
+                        pending_shift=to_pending_shift(confirmed_row),
+                        duplicate=True,
+                    )
+
             if row is None:
                 row = PendingShiftTable(
                     user_id=user_id,
@@ -93,20 +130,18 @@ class GeofenceRepository:
                 session.add(row)
                 await session.flush()
 
-            processed = row.status in {
-                PendingShiftStatus.CONFIRMED,
-                PendingShiftStatus.REJECTED,
-            }
+            event_status = self._merge_event(
+                row,
+                event_type,
+                occurred_at_utc,
+                dedup_minutes,
+            )
 
-            if not processed and linked_work_session_id is not None and linked_started_at_utc is not None:
-                # активная смена
-                row.work_session_id = linked_work_session_id
-                row.suggested_start_utc = linked_started_at_utc
-
-            event_status = self._merge_event(row, event_type, occurred_at_utc, dedup_minutes, processed)
-            if not processed:
-                row.status = _derive_status(row.suggested_start_utc, row.suggested_end_utc)
-                row.updated_at_utc = now
+            row.status = _derive_status(
+                row.suggested_start_utc,
+                row.suggested_end_utc,
+            )
+            row.updated_at_utc = now
 
             event_row = GeofenceEventTable(
                 user_id=user_id,
@@ -124,7 +159,7 @@ class GeofenceRepository:
             return GeofenceRegistration(
                 event=to_geofence_event(event_row),
                 pending_shift=to_pending_shift(row),
-                duplicate=event_status == GeofenceEventStatus.DUPLICATE or processed,
+                duplicate=event_status == GeofenceEventStatus.DUPLICATE,
             )
 
     @staticmethod
@@ -133,11 +168,7 @@ class GeofenceRepository:
         event_type: str,
         occurred_at_utc: datetime,
         dedup_minutes: int,
-        processed: bool,
     ) -> str:
-        if processed:
-            return GeofenceEventStatus.DUPLICATE
-
         if event_type == "arrival":
             current = row.suggested_start_utc
             if current is None:

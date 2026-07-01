@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import Config
 from app.context import AppContext
+from app.database.enums import GeofenceEventStatus
 from app.database.session import Database
 from app.services.geofence_notifications import sync_pending_notification
 
@@ -122,12 +123,16 @@ class HealthServer:
                 client=payload["client"],
                 dedup_minutes=self.config.geofence_event_dedup_minutes,
             )
-            notification_sent = await sync_pending_notification(
-                self.bot,
-                self.context.geofence_repository,
-                registration.pending_shift,
-                user.timezone,
-            )
+            notification_sent = False
+
+            if registration.event.status != GeofenceEventStatus.DUPLICATE:
+                notification_sent = await sync_pending_notification(
+                    self.bot,
+                    self.context.geofence_repository,
+                    registration.pending_shift,
+                    user.timezone,
+                )
+
             response_status = 200 if registration.duplicate else 202
             logger.info(
                 "Geofence event accepted",

@@ -233,13 +233,25 @@ class PendingShiftTable(Base):
     processed_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("user_id", "local_date", name="uq_pending_shifts_user_date"),
         CheckConstraint(
             "status IN ('waiting_arrival', 'waiting_departure', 'ready', 'attention', "
             "'confirmed', 'rejected')",
             name="ck_pending_shifts_status",
         ),
-        Index("idx_pending_shifts_user_status_date", "user_id", "status", "local_date"),
+        Index(
+            "idx_pending_shifts_user_status_date",
+            "user_id",
+            "status",
+            "local_date",
+        ),
+        Index(
+            "uq_pending_shifts_active_user_date",
+            "user_id",
+            "local_date",
+            unique=True,
+            sqlite_where=text("status IN ('waiting_arrival', 'waiting_departure', 'ready', 'attention')"),
+            postgresql_where=text("status IN ('waiting_arrival', 'waiting_departure', 'ready', 'attention')"),
+        ),
     )
 
 
